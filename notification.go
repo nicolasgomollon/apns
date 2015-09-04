@@ -63,7 +63,7 @@ func (a *Alert) isZero() bool {
 // APS is the Apple-reserved aps namespace in a push notification.
 type APS struct {
 	Alert            Alert
-	Badge            *int // 0 to clear notifications, nil to leave as is.
+	Badge            BadgeNumber
 	Sound            string
 	ContentAvailable int
 	URLArgs          []string
@@ -82,7 +82,7 @@ func (aps APS) MarshalJSON() ([]byte, error) {
 			data["alert"] = aps.Alert
 		}
 	}
-	if aps.Badge != nil {
+	if aps.Badge.Valid {
 		data["badge"] = aps.Badge
 	}
 	if aps.Sound != "" {
