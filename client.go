@@ -30,15 +30,23 @@ func (b *buffer) Add(v interface{}) *list.Element {
 type Client struct {
 	Conn         *Conn
 	FailedNotifs chan NotificationResult
+	Sent         int
+	Failed       int
+	Len          int
+	Verbose      bool
 
 	notifs chan Notification
 	id     uint32
 }
 
-func newClientWithConn(gw string, conn Conn) Client {
-	c := Client{
+func newClientWithConn(gw string, conn Conn, verbose bool) *Client {
+	c := &Client{
 		Conn:         &conn,
 		FailedNotifs: make(chan NotificationResult),
+		Sent:         0,
+		Failed:       0,
+		Len:          0,
+		Verbose:      verbose,
 		id:           uint32(1),
 		notifs:       make(chan Notification),
 	}
@@ -48,33 +56,58 @@ func newClientWithConn(gw string, conn Conn) Client {
 	return c
 }
 
-func NewClientWithCert(gw string, cert tls.Certificate) Client {
+func NewClientWithCert(gw string, cert tls.Certificate, args ...bool) *Client {
+	verbose := false
+	for _, v := range args {
+		verbose = v
+		break
+	}
 	conn := NewConnWithCert(gw, cert)
-
-	return newClientWithConn(gw, conn)
+	return newClientWithConn(gw, conn, verbose)
 }
 
-func NewClient(gw string, cert string, key string) (Client, error) {
+func NewClient(gw string, cert string, key string, args ...bool) (*Client, error) {
+	verbose := false
+	for _, v := range args {
+		verbose = v
+		break
+	}
 	conn, err := NewConn(gw, cert, key)
 	if err != nil {
-		return Client{}, err
+		return nil, err
 	}
-
-	return newClientWithConn(gw, conn), nil
+	return newClientWithConn(gw, conn, verbose), nil
 }
 
-func NewClientWithFiles(gw string, certFile string, keyFile string) (Client, error) {
+func NewClientWithFiles(gw string, certFile string, keyFile string, args ...bool) (*Client, error) {
+	verbose := false
+	for _, v := range args {
+		verbose = v
+		break
+	}
 	conn, err := NewConnWithFiles(gw, certFile, keyFile)
 	if err != nil {
-		return Client{}, err
+		return nil, err
 	}
-
-	return newClientWithConn(gw, conn), nil
+	return newClientWithConn(gw, conn, verbose), nil
 }
 
-func (c *Client) Send(n Notification) error {
+func (c *Client) logln(v ...interface{}) {
+	if c.Verbose {
+		log.Println(v...)
+	}
+}
+
+func (c *Client) logf(s string, v ...interface{}) {
+	if c.Verbose {
+		log.Printf(s, v...)
+	}
+}
+
+func (c *Client) Send(n Notification) {
+	c.logln("Added notification to push queue.")
+	c.Len++
 	c.notifs <- n
-	return nil
 }
 
 func (c *Client) reportFailedPush(v interface{}, err *Error) {
@@ -150,19 +183,34 @@ func (c *Client) runLoop() {
 			// ready channels. It turns out to be fine because the connection will already
 			// be closed and it'll requeue. We could check before we get to this select
 			// block, but it doesn't seem worth the extra code and complexity.
+			c.logln("Waiting for channel input...")
 			select {
 			case err = <-errs:
+				break
 			case n = <-c.notifs:
-			}
-
-			// If there is an error we understand, find the notification that failed,
-			// move the cursor right after it.
-			if nErr, ok := err.(*Error); ok {
-				cursor = c.handleError(nErr, sent)
+				notificationPayloadBytes, _ := n.Payload.MarshalJSON()
+				notificationPayload := string(notificationPayloadBytes)
+				c.logf("Incoming notification to %v: %v\n", n.DeviceToken, notificationPayload)
 				break
 			}
 
+			// Check if there is an error we understand.
+			if nErr, ok := err.(*Error); ok {
+				c.logf("APNS ERROR %v: %v\n", nErr.Status, nErr.ErrStr)
+				if (2 <= nErr.Status) && (nErr.Status <= 8) {
+					// The notification is malformed in some way, and resending it won't help.
+					c.Sent--
+					c.Failed++
+					continue
+				} else {
+					// Find the notification that failed, move the cursor right after it.
+					cursor = c.handleError(nErr, sent)
+					break
+				}
+			}
+
 			if err != nil {
+				c.logln("Received error:", err.Error())
 				break
 			}
 
@@ -177,24 +225,31 @@ func (c *Client) runLoop() {
 				c.id = n.Identifier + 1
 			}
 
+			// Build binary representation of notification.
 			b, err := n.ToBinary()
 			if err != nil {
-				// TODO
+				// Building the binary failed in some way, so skip it.
+				c.Failed++
+				cursor = cursor.Next()
+				c.logln("Error building binary for notification:", err.Error())
 				continue
 			}
 
+			// Write the notification binary to the APNS connection.
 			_, err = c.Conn.Write(b)
 
 			if err == io.EOF {
-				log.Println("EOF trying to write notification")
+				c.logln("Received EOF trying to write notification.")
 				break
 			}
 
 			if err != nil {
-				log.Println("err writing to apns", err.Error())
+				c.logln("Error writing to APNS connection:", err.Error())
 				break
 			}
 
+			c.logln("Successfully pushed notification!")
+			c.Sent++
 			cursor = cursor.Next()
 		}
 	}

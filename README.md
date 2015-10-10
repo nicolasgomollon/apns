@@ -30,52 +30,62 @@ Checkout the `develop` branch for the current work in progress.
 ### Sending a push notification (basic)
 
 ```go
-c, _ := apns.NewClient(apns.ProductionGateway, apnsCert, apnsKey)
+client, _ := apns.NewClient(apns.ProductionGateway, apnsCert, apnsKey)
 
-p := apns.NewPayload()
-p.APS.Alert.Body = "I am a push notification!"
-p.APS.Badge.Set(5)
-p.APS.Sound = "turn_down_for_what.aiff"
+payload := apns.NewPayload()
+payload.APS.Alert.Body = "I am a push notification!"
+payload.APS.Badge.Set(5)
+payload.APS.Sound = "turn_down_for_what.aiff"
 
-m := apns.NewNotification()
-m.Payload = p
-m.DeviceToken = "A_DEVICE_TOKEN"
-m.Priority = apns.PriorityImmediate
+notif := apns.NewNotification()
+notif.Payload = payload
+notif.DeviceToken = "A_DEVICE_TOKEN"
+notif.Priority = apns.PriorityImmediate
 
-c.Send(m)
+client.Send(notif)
+
+// Wait for all notifications to be pushed before exiting.
+for (client.Sent + client.Failed) < client.Len {
+	time.Sleep(30 * time.Second)
+}
 ```
 
 ### Sending a push notification with error handling
 
 ```go
-c, err := apns.NewClient(apns.ProductionGateway, apnsCert, apnsKey)
+client, err := apns.NewClient(apns.ProductionGateway, apnsCert, apnsKey, true /* optional verbose mode */)
 if err != nil {
 	log.Fatal("could not create new client", err.Error()
 }
 
 go func() {
-	for f := range c.FailedNotifs {
+	for f := range client.FailedNotifs {
 		fmt.Println("Notif", f.Notif.ID, "failed with", f.Err.Error())
 	}
 }()
 
-p := apns.NewPayload()
-p.APS.Alert.Body = "I am a push notification!"
-p.APS.Badge.Set(5)
-p.APS.Sound = "turn_down_for_what.aiff"
-p.APS.ContentAvailable = 1
+payload := apns.NewPayload()
+payload.APS.Alert.Body = "I am a push notification!"
+payload.APS.Badge.Set(5)
+payload.APS.Sound = "turn_down_for_what.aiff"
+payload.APS.ContentAvailable = 1
 
-p.SetCustomValue("link", "zombo://dot/com")
-p.SetCustomValue("game", map[string]int{"score": 234})
+payload.SetCustomValue("link", "zombo://dot/com")
+payload.SetCustomValue("game", map[string]int{"score": 234})
 
-m := apns.NewNotification()
-m.Payload = p
-m.DeviceToken = "A_DEVICE_TOKEN"
-m.Priority = apns.PriorityImmediate
-m.Identifier = 12312, // Integer for APNS
-m.ID = "user_id:timestamp", // ID not sent to Apple – to identify error notifications
+notif := apns.NewNotification()
+notif.Payload = payload
+notif.DeviceToken = "A_DEVICE_TOKEN"
+notif.Priority = apns.PriorityImmediate
+notif.Identifier = 12312, // Integer for APNS
+notif.ID = "user_id:timestamp", // ID not sent to Apple – to identify error notifications
 
-c.Send(m)
+client.Send(notif)
+
+// Wait for all notifications to be pushed before exiting.
+for (client.Sent + client.Failed) < client.Len {
+	time.Sleep(30 * time.Second)
+}
 ```
 
 ### Retrieving feedback
