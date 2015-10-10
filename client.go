@@ -105,7 +105,7 @@ func (c *Client) Send(n Notification) {
 
 	b, err := n.ToBinary()
 	if err != nil {
-		log.Println("Could not convert APNS notification to binary:", err)
+		c.log("Could not convert APNS notification to binary:", err)
 		return
 	}
 
@@ -148,14 +148,14 @@ func (c *Client) reconnect() {
 	for {
 		if err := c.Conn.Connect(); err != nil {
 			// TODO Probably want to exponentially backoff...
-			log.Println("Error connecting to APNS, will retry:", err)
+			c.log("Error connecting to APNS, will retry:", err)
 			time.Sleep(time.Second)
 			continue
 		}
 		break
 	}
 
-	log.Println("Connection to APNS (re-)established.")
+	c.log("Connection to APNS (re-)established.")
 
 	go c.readErrs()
 
@@ -196,7 +196,7 @@ func (c *Client) readErrs() {
 
 		// If the notification id matches, move cursor after the trouble notification
 		if n.Identifier == apnsErr.Identifier {
-			log.Println("APNS notification failed:", apnsErr.Error(), n.ID)
+			c.log("APNS notification failed:", apnsErr.Error(), n.ID)
 			go c.reportFailedPush(n, apnsErr)
 			resend = cursor.Next()
 			c.sent.Remove(cursor)
